@@ -1,0 +1,91 @@
+name: Bulletproof Build with Custom Name
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Auto-Extract and Flatten Project Structure
+        run: |
+          echo "=== Initial Workspace Files ==="
+          ls -la
+          
+          # If a zip file was uploaded, extract it automatically
+          if ls *.zip 1> /dev/null 2>&1; then
+            ZIP_FILE=$(ls *.zip | head -n 1)
+            echo "Found archive: $ZIP_FILE. Extracting..."
+            mkdir -p extracted_zip
+            unzip -q "$ZIP_FILE" -d extracted_zip
+            rm "$ZIP_FILE"
+          fi
+          
+          # Locate the directory containing settings.gradle.kts or build.gradle.kts
+          PROJECT_DIR=$(find . -name "settings.gradle.kts" -o -name "build.gradle.kts" -not -path "*/.*" -exec dirname {} \; | head -n 1)
+          
+          # If the project is nested inside a subfolder, flatten it to the root
+          if [ -n "$PROJECT_DIR" ] && [ "$PROJECT_DIR" != "." ]; then
+            echo "Moving project files from $PROJECT_DIR to root workspace..."
+            shopt -s dotglob
+            mv "$PROJECT_DIR"/* .
+          fi
+          
+          echo "=== Cleaned Workspace Files ==="
+          ls -la
+
+      - name: Apply Custom App Name ('Nhi Gel''s Foresight')
+        run: |
+          # 1. Update AndroidManifest.xml app name if it exists
+          MANIFEST_PATH="app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST_PATH" ]; then
+            echo "Updating app name in AndroidManifest.xml..."
+            sed -i 's/android:label="[^"]*"/android:label="Nhi Gel''s Foresight"/g' "$MANIFEST_PATH"
+            # If android:label doesn't exist in application tag, add it
+            if ! grep -q "android:label=" "$MANIFEST_PATH"; then
+              sed -i 's/<application/<application android:label="Nhi Gel''s Foresight"/' "$MANIFEST_PATH"
+            fi
+          fi
+
+          # 2. Update strings.xml app name if it exists
+          STRINGS_PATH="app/src/main/res/values/strings.xml"
+          if [ -f "$STRINGS_PATH" ]; then
+            echo "Updating app name in strings.xml..."
+            sed -i 's/<string name="app_name">[^<]*<\/string>/<string name="app_name">Nhi Gel''s Foresight<\/string>/g' "$STRINGS_PATH"
+          else
+            mkdir -p app/src/main/res/values
+            echo '<?xml version="1.0" encoding="utf-8"?><resources><string name="app_name">Nhi Gel''s Foresight</string></resources>' > "$STRINGS_PATH"
+          fi
+
+      - name: Configure Android SDK Location
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: Ensure Gradle Wrapper is Ready
+        run: |
+          if [ ! -f "gradlew" ]; then
+            echo "Gradle wrapper missing, generating..."
+            gradle wrapper --gradle-version 8.5
+          fi
+          chmod +x gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
